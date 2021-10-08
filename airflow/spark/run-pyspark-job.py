@@ -3,7 +3,7 @@ from pyspark.sql import SparkSession
 import spark_util
 
 def init_spark():
-    spark = spark_util.getOrCreateSparkSession("Pyspark Hello World")
+    spark = spark_util.getOrCreateSparkSession("Hello from Python file")
     sc = spark.sparkContext
     return spark, sc
 

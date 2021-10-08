@@ -4,10 +4,6 @@ import sys
 import time
 import subprocess
 
-# Do this on demand instead 
-# subprocess.check_call([sys.executable, "-m", "pip", "install", "openshift-client"])
-# subprocess.check_call([sys.executable, "-m", "pip", "install", "jinja2"])
-# subprocess.check_call([sys.executable, "-m", "pip", "install", "pyspark"])
 
 # get all installed packages as installed_packages
 reqs = subprocess.check_output([sys.executable, '-m', 'pip', 'freeze'])
@@ -17,18 +13,22 @@ installed_packages = [r.decode().split('==')[0] for r in reqs.split()]
 def install(package):
     subprocess.check_call([sys.executable, "-m", "pip", "install", package])
 
-def get_cluster_name(index = 0):
+
+def get_cluster_name(index = 0, from_env=False):
     # Get the cluster name from env var or from spark-info.txt file
-    
-    if os.getenv('SPARK_CLUSTER') is None:
+
+    if os.path.exists('spark-info.txt') and not from_env:
         print("Retrieving spark cluster name from spark-info.txt file...")
         with open('spark-info.txt', 'r') as sparkinfo:
             spark_cluster_name = sparkinfo.readlines()[0 + (index * 2)].replace("\n", "").strip()
         os.environ['SPARK_CLUSTER'] = spark_cluster_name
         print(f"Found new cluster name: {spark_cluster_name}")
         return spark_cluster_name
-    print(f"Found existing cluster name: {os.getenv('SPARK_CLUSTER')}")
-    return os.getenv('SPARK_CLUSTER')
+
+    if os.environ['SPARK_CLUSTER'].startswith('spark-cluster-'):
+        return os.environ['SPARK_CLUSTER']
+
+    return f"spark-cluster-{os.environ['SPARK_CLUSTER']}"
 
 
 def get_driver_host_ip():
@@ -43,20 +43,16 @@ def init_environment(submit_args):
     cluster_name = get_cluster_name()
     print(f"Cluter name: {cluster_name}")
 
-    os.environ['PYSPARK_SUBMIT_ARGS'] = \
-    f"--packages org.apache.spark:spark-sql-kafka-0-10_2.11:2.4.5,org.apache.kafka:kafka-clients:2.4.0,org.apache.spark:spark-streaming_2.11:2.4.5,org.apache.hadoop:hadoop-aws:2.7.3 \
-    {submit_args} --conf spark.jars.ivy=/tmp --master spark://{cluster_name}:7077 pyspark-shell "
-    
+    os.environ['PYSPARK_SUBMIT_ARGS'] = f"{submit_args} --master spark://{cluster_name}:7077 pyspark-shell "
     print(f"PYSPARK_SUBMIT_ARGS: {os.environ['PYSPARK_SUBMIT_ARGS']}")
-    
+
 
 def getOrCreateSparkSession(application_name, submit_args = "", log_level="INFO"):
     # Creates a Spark session from a given Spark application name and optional submit_arg arguments
-    
+
     if ("pyspark") not in installed_packages:
         install("pyspark")
-    
-    
+
     from pyspark import SparkConf
     from pyspark.sql import SparkSession
 
@@ -71,7 +67,7 @@ def getOrCreateSparkSession(application_name, submit_args = "", log_level="INFO"
         .config("spark.driver.host", ip_address)\
         .config("spark.driver.bindAddress", ip_address)\
         .appName(application_name)
-    
+
     print("Creating a spark session...")
     spark = sparkSessionBuilder.getOrCreate()
     spark.sparkContext.setLogLevel(log_level)
@@ -81,7 +77,7 @@ def getOrCreateSparkSession(application_name, submit_args = "", log_level="INFO"
 
 def wait(predicate, timeout):
     # Evaluates the given predicate function every 5 seconds until it returns true
-    
+
     mustend = time.time() + timeout
     time.sleep(5)
     while time.time() < mustend:
@@ -95,7 +91,7 @@ def wait(predicate, timeout):
 
 def get_openshift_info():
     # Returns spark API server URL, Token information and current project/namespace
-    
+
     print("Retrieving Openshift info...")
     # Get the Openshift API URL
     server = "https://" + os.environ["KUBERNETES_SERVICE_HOST"] + ":" + os.environ["KUBERNETES_SERVICE_PORT"] 
@@ -113,7 +109,7 @@ def get_openshift_info():
     with open('/var/run/secrets/kubernetes.io/serviceaccount/namespace', 'r') as namespace:
         project = namespace.read()
     print(f"Project name: {project}")
-    
+
     return server, token, project
 
 
@@ -123,10 +119,10 @@ def start_spark_cluster(cluster_name = "default", worker_nodes = "2", timeout_se
 
     if ("openshift-client") not in installed_packages:
         install("openshift-client")
-        
+
     if ("jinja2") not in installed_packages:
         install("jinja2")
-    
+
     import openshift as oc
     from jinja2 import Template
 
@@ -153,12 +149,16 @@ def start_spark_cluster(cluster_name = "default", worker_nodes = "2", timeout_se
                     print(f"Spark Cluster already exists {cluster_prefix}-{cluster_name}")
                     sys.exit(0)
 
-                template_data = {"clustername": f"{cluster_prefix}-{cluster_name}", "workernodes": f"{worker_nodes}"}
+                template_data = {"clustername": f"{cluster_prefix}-{cluster_name}", "workernodes": f"{worker_nodes}", "project": project}
                 applied_template = Template(open("spark-cluster.yaml").read())
 
                 print(f"Creating SparkCluster {cluster_prefix}-{cluster_name} ...")
                 # print(applied_template.render(template_data))
                 oc.create(applied_template.render(template_data))
+
+                route_template = Template(open("spark-cluster-route.yaml").read())
+                print("Creating or updating route for Spark UI... ")
+                oc.apply(route_template.render(template_data))
 
                 # predicate function to check if the master node and all worker nodes are ready
                 cluster_ready = lambda _: \
@@ -180,10 +180,10 @@ def start_spark_cluster(cluster_name = "default", worker_nodes = "2", timeout_se
 
 def stop_spark_cluster(cluster_name = "default"):
     # Deletes SparkCluster Kubernetes resource with the given name
-    
+
     if ("openshift-client") not in installed_packages:
         install("openshift-client")
-        
+
     import openshift as oc
 
     server, token, project = get_openshift_info()
