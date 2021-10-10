@@ -20,7 +20,7 @@
               "spark-info.txt"
             ],
             "env_vars": [
-              "SPARK_CLUSTER=ross-cluster",
+              "SPARK_CLUSTER=mhepburn",
               "WORKER_NODES=2"
             ],
             "dependencies": [
