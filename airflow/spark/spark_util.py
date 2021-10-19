@@ -34,17 +34,17 @@ def get_cluster_name(index = 0, from_env=False):
 def get_driver_host_ip():
     # Returns the IP address where this process is running on
     ip_address = socket.gethostbyname(socket.gethostname())
-    print(f"Driver IP address: {ip_address}")
+    #print(f"Driver IP address: {ip_address}")
     return ip_address
 
 
 def init_environment(submit_args):
     # Prepares Spark related configuration through PYSPARK_SUBMIT_ARGS env variable
     cluster_name = get_cluster_name()
-    print(f"Cluter name: {cluster_name}")
+    #print(f"Cluter name: {cluster_name}")
 
     os.environ['PYSPARK_SUBMIT_ARGS'] = f"{submit_args} --master spark://{cluster_name}:7077 pyspark-shell "
-    print(f"PYSPARK_SUBMIT_ARGS: {os.environ['PYSPARK_SUBMIT_ARGS']}")
+    #print(f"PYSPARK_SUBMIT_ARGS: {os.environ['PYSPARK_SUBMIT_ARGS']}")
 
 
 def getOrCreateSparkSession(application_name, submit_args = "", log_level="INFO"):
@@ -72,9 +72,40 @@ def getOrCreateSparkSession(application_name, submit_args = "", log_level="INFO"
     spark = sparkSessionBuilder.getOrCreate()
     spark.sparkContext.setLogLevel(log_level)
     print("Spark session created")
+    
+    cluster_name, app_url = get_app_url(spark.sparkContext.applicationId)
+    from IPython.core.display import display, HTML
+    display(HTML(f"""
+        <div>
+            <br/>
+            <p><b>Spark Context</b></p>
+            <dl>
+              <dt>Cluster Name</dt>
+                <dd><code>{cluster_name}</code></dd>
+              <dt>Version</dt>
+                <dd><code>v{spark.sparkContext.version}</code></dd>
+              <dt>Master</dt>
+                <dd><code>{spark.sparkContext.master}</code></dd>
+              <dt>App Id</dt>
+                <dd><code>{spark.sparkContext.applicationId}</code></dd>
+              <dt>App Name</dt>
+                <dd><code>{spark.sparkContext.appName}</code></dd>
+              <dt>Driver IP</dt>
+                <dd><code>{ip_address}</code></dd>
+            </dl>
+        </div>
+    """))
+    
     return spark
 
+            
+def get_app_url(app_id):
+    cluster_name = get_cluster_name()
+    app_url = f"http://{cluster_name}/app/?appId={app_id}"
+    
+    return cluster_name, app_url
 
+            
 def wait(predicate, timeout):
     # Evaluates the given predicate function every 5 seconds until it returns true
 
